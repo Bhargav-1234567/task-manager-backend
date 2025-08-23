@@ -50,6 +50,12 @@ const loginUser = async (req, res) => {
 
     if (user && (await user.matchPassword(password))) {
       // ✅ Set token cookie for cross-origin requests
+      res.cookie("token", token, {
+        httpOnly: true, // cannot access from JS
+        secure: process.env.NODE_ENV === "production", // true in production (HTTPS)
+        sameSite: "none", // allow cross-site cookies
+        maxAge: 60 * 60,
+      });
 
       // Send user info in response
       res.json({
