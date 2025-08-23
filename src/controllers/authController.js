@@ -49,8 +49,6 @@ const loginUser = async (req, res) => {
     const user = await User.findOne({ email }).select("+password");
 
     if (user && (await user.matchPassword(password))) {
-      const token = generateToken(user._id);
-
       // ✅ Set token cookie for cross-origin requests
 
       // Send user info in response
@@ -59,7 +57,7 @@ const loginUser = async (req, res) => {
         name: user.name,
         email: user.email,
         avatar: user.avatar,
-        token: token,
+        token: generateToken(user._id),
       });
     } else {
       res.status(401).json({ message: "Invalid email or password" });
