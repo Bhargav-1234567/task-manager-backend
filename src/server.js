@@ -3,6 +3,10 @@ const cors = require("cors");
 const connectDB = require("./config/database");
 require("./utils/loadenv");
 
+const allowedOrigins = [
+  "http://localhost:3000", // local dev
+  "https://task-manager-next-zen.netlify.app", // live frontend
+];
 // Connect to database
 connectDB();
 
@@ -11,12 +15,27 @@ const authRoutes = require("./routes/auth");
 const taskRoutes = require("./routes/task");
 const customSectionRoutes = require("./routes/customSection");
 const seedDefaultSections = require("./utils/seedDefaultSections");
+const cookieParser = require("cookie-parser");
 
 const app = express();
+app.use(cookieParser());
+
 // Seed default sections
 seedDefaultSections();
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like Postman) or from allowed domains
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // allow cookies
+  })
+);
 app.use(express.json());
 
 // Mount routers - make sure these are properly imported

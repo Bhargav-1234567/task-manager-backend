@@ -243,14 +243,13 @@ const updateTaskStatus = async (req, res) => {
 const getTasksBoard = async (req, res) => {
   try {
     // Get all sections (statuses) for the user
-    const sections = await CustomSection.find({
-      $or: [{ createdBy: req.user._id }, { isDefault: true }],
-    }).sort({ isDefault: -1, createdAt: 1 });
+    const sections = await CustomSection.find().sort({
+      isDefault: -1,
+      createdAt: 1,
+    });
 
     // Get all tasks for the user (either created by or assigned to)
-    const tasks = await Task.find({
-      $or: [{ createdBy: req.user._id }, { assignees: req.user._id }],
-    })
+    const tasks = await Task.find()
       .populate("assignees", "name email avatar")
       .populate("createdBy", "name email")
       .sort({ createdAt: -1 });

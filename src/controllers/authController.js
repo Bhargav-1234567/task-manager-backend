@@ -44,16 +44,17 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-    // Check for user email
+
+    // Find user and include password
     const user = await User.findOne({ email }).select("+password");
 
     if (user && (await user.matchPassword(password))) {
+      // Send user info in response
       res.json({
         _id: user._id,
         name: user.name,
         email: user.email,
         avatar: user.avatar,
-        token: generateToken(user._id),
       });
     } else {
       res.status(401).json({ message: "Invalid email or password" });
