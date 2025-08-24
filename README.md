@@ -9,7 +9,7 @@ https://task-manager-next-zen.netlify.app
 https://task-manager-backend-04g0.onrender.com/
 
 development instrunctions
-node js project built with nodemon, mongodb, mongoose
+node js project built with nodemon, mongodb, mongoose, express js and jwt
 
 testing env variables
 PORT=5000
