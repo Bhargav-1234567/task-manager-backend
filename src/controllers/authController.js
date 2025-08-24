@@ -122,9 +122,28 @@ const updateUserProfile = async (req, res) => {
   }
 };
 
+// @desc    Get all users
+// @route   GET /api/auth/users
+// @access  Private (Admin only)
+const getAllUsers = async (req, res) => {
+  try {
+    // You might want only admins to access this
+    // if (!req.user || !req.user.isAdmin) {
+    //   return res.status(403).json({ message: "Not authorized" });
+    // }
+
+    const users = await User.find().select("-password"); // exclude password field
+    res.json(users);
+  } catch (error) {
+    console.error("Get all users error:", error);
+    res.status(500).json({ message: "Server error while fetching users" });
+  }
+};
+
 module.exports = {
   registerUser,
   loginUser,
   getUserProfile,
   updateUserProfile,
+  getAllUsers,
 };

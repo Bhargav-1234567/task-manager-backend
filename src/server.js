@@ -21,7 +21,7 @@ const app = express();
 app.use(cookieParser());
 
 // Seed default sections
-seedDefaultSections();
+// seedDefaultSections();
 // Middleware
 app.use(
   cors({

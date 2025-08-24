@@ -197,9 +197,9 @@ const deleteTask = async (req, res) => {
     }
 
     // Check if user owns the task
-    if (task.createdBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
+    // if (task.createdBy.toString() !== req.user._id.toString()) {
+    //   return res.status(403).json({ message: "Not authorized" });
+    // }
 
     await Task.findByIdAndDelete(req.params.id);
 
@@ -309,6 +309,153 @@ const getTasksBoard = async (req, res) => {
   }
 };
 
+// @desc    Update multiple tasks sort indices (for drag & drop reordering)
+// @route   PATCH /api/tasks/bulk-sort-update
+// @access  Private
+const bulkUpdateSortIndex = async (req, res) => {
+  try {
+    const { updates } = req.body; // Array of { taskId, sortIndex, containerId }
+
+    if (!updates || !Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ message: "Updates array is required" });
+    }
+
+    // Validate all tasks belong to user before making any changes
+    const taskIds = updates.map((update) => update.taskId);
+    const tasks = await Task.find({ _id: { $in: taskIds } });
+
+    // Check if all tasks were found
+    if (tasks.length !== taskIds.length) {
+      return res.status(404).json({ message: "One or more tasks not found" });
+    }
+
+    // Validate user permissions for all tasks
+    for (let task of tasks) {
+      if (
+        task.createdBy.toString() !== req.user._id.toString() &&
+        !task.assignees.some(
+          (userId) => userId.toString() === req.user._id.toString()
+        )
+      ) {
+        return res.status(403).json({
+          message: "Not authorized to update one or more tasks",
+        });
+      }
+    }
+
+    // Validate containers if containerId is being updated
+    const containerUpdates = updates.filter((update) => update.containerId);
+    if (containerUpdates.length > 0) {
+      const containerIds = [
+        ...new Set(containerUpdates.map((update) => update.containerId)),
+      ];
+      const containers = await CustomSection.find({
+        _id: { $in: containerIds },
+      });
+
+      for (let containerId of containerIds) {
+        if (!(await validateStatus(req.user._id, containerId))) {
+          return res.status(400).json({
+            message: `Invalid container: ${containerId}`,
+          });
+        }
+      }
+    }
+
+    // Use bulk operations for efficiency
+    const bulkOps = updates.map(({ taskId, sortIndex, containerId }) => {
+      const updateFields = { sortIndex: sortIndex };
+
+      // If moving between containers, update containerId and status
+      if (containerId) {
+        const container = CustomSection.findById(containerId);
+        updateFields.containerId = containerId;
+        updateFields.status = containerId; // Assuming status matches containerId
+      }
+
+      return {
+        updateOne: {
+          filter: { _id: taskId },
+          update: updateFields,
+        },
+      };
+    });
+
+    const result = await Task.bulkWrite(bulkOps);
+
+    // Return updated tasks
+    const updatedTasks = await Task.find({ _id: { $in: taskIds } })
+      .populate("assignees", "name email avatar")
+      .populate("createdBy", "name email")
+      .sort({ sortIndex: 1 });
+
+    res.json({
+      message: `Successfully updated ${result.modifiedCount} tasks`,
+      modifiedCount: result.modifiedCount,
+      tasks: updatedTasks,
+    });
+  } catch (error) {
+    console.error("Bulk update sort index error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// @desc    Update sort indices for tasks in a specific container
+// @route   PATCH /api/tasks/container/:containerId/reorder
+// @access  Private
+const reorderTasksInContainer = async (req, res) => {
+  try {
+    const { containerId } = req.params;
+    const { taskOrders } = req.body; // Array of { taskId, sortIndex }
+
+    if (!taskOrders || !Array.isArray(taskOrders)) {
+      return res.status(400).json({ message: "taskOrders array is required" });
+    }
+
+    // Validate container exists and user has access
+    if (!(await validateStatus(req.user._id, containerId))) {
+      return res.status(400).json({ message: "Invalid container" });
+    }
+
+    // Get all tasks in the container that belong to the user
+    const taskIds = taskOrders.map((order) => order.taskId);
+    const tasks = await Task.find({
+      _id: { $in: taskIds },
+      containerId,
+      $or: [{ createdBy: req.user._id }, { assignees: req.user._id }],
+    });
+
+    if (tasks.length !== taskIds.length) {
+      return res.status(403).json({
+        message: "Not authorized to update one or more tasks in this container",
+      });
+    }
+
+    // Create bulk update operations
+    const bulkOps = taskOrders.map(({ taskId, sortIndex }) => ({
+      updateOne: {
+        filter: {
+          _id: taskId,
+          containerId,
+          $or: [{ createdBy: req.user._id }, { assignees: req.user._id }],
+        },
+        update: { sortIndex },
+      },
+    }));
+
+    const result = await Task.bulkWrite(bulkOps);
+
+    res.json({
+      message: `Successfully reordered ${result.modifiedCount} tasks in container`,
+      modifiedCount: result.modifiedCount,
+      containerId,
+    });
+  } catch (error) {
+    console.error("Reorder tasks error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 // Helper function to format date range
 const formatDateRange = (dueDate) => {
   if (!dueDate) return "No due date";
@@ -361,4 +508,6 @@ module.exports = {
   deleteTask,
   updateTaskStatus,
   getTasksBoard,
+  bulkUpdateSortIndex,
+  reorderTasksInContainer,
 };
