@@ -21,12 +21,13 @@ const getSections = async (req, res) => {
 // @access  Private
 const createSection = async (req, res) => {
   try {
-    const { name, color } = req.body;
+    const { title, color } = req.body;
 
     const section = await CustomSection.create({
-      name,
+      title: title,
       color: color || "#3B82F6",
-      createdBy: req.user._id,
+      createdBy: req?.user?._id,
+      tasks: [],
     });
 
     res.status(201).json(section);

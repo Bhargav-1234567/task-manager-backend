@@ -16,6 +16,10 @@ const taskSchema = new mongoose.Schema(
       type: String,
       default: "Open",
     },
+    containerId: {
+      type: String,
+      required: [true, "Container Id Required"],
+    },
     priority: {
       type: String,
       enum: ["Low", "Normal", "High"],
@@ -24,12 +28,16 @@ const taskSchema = new mongoose.Schema(
     dueDate: {
       type: Date,
     },
+    labels: {
+      type: Array,
+    },
     assignees: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
       },
     ],
+    sortIndex: { type: Number },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -57,7 +65,7 @@ const taskSchema = new mongoose.Schema(
 );
 
 // Create index for better performance
-taskSchema.index({ createdBy: 1, status: 1 });
+// taskSchema.index({ createdBy: 1, status: 1 });
 taskSchema.index({ assignees: 1 });
 taskSchema.index({ dueDate: 1 });
 

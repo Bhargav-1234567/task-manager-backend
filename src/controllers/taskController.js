@@ -2,13 +2,16 @@ const Task = require("../models/Task");
 const CustomSection = require("../models/CustomSection");
 
 // Helper function to validate status
-const validateStatus = async (userId, status) => {
-  const validSections = await CustomSection.find({
-    $or: [{ createdBy: userId }, { isDefault: true }],
-  });
+const validateStatus = async (userId, statusId) => {
+  const section = await CustomSection.findById(statusId);
 
-  const validStatuses = validSections.map((section) => section.name);
-  return validStatuses.includes(status);
+  if (!section) return false;
+
+  if (section.isDefault || section.createdBy.toString() === userId.toString()) {
+    return true;
+  }
+
+  return false;
 };
 
 // @desc    Get all tasks for authenticated user
@@ -96,11 +99,20 @@ const getTask = async (req, res) => {
 // @access  Private
 const createTask = async (req, res) => {
   try {
-    const { title, description, status, priority, dueDate, assignees } =
-      req.body;
+    const {
+      title,
+      description,
+      status,
+      priority,
+      dueDate,
+      assignees,
+      createdBy,
+      containerId,
+      sortIndex,
+    } = req.body;
 
     // Validate status
-    if (status && !(await validateStatus(req.user._id, status))) {
+    if (status && !(await validateStatus(createdBy, containerId))) {
       return res.status(400).json({ message: "Invalid status" });
     }
 
@@ -108,10 +120,12 @@ const createTask = async (req, res) => {
       title,
       description,
       status: status || "Open",
+      containerId: containerId,
       priority: priority || "Normal",
       dueDate,
       assignees,
-      createdBy: req.user._id,
+      createdBy: createdBy,
+      sortIndex: sortIndex,
     });
 
     const populatedTask = await Task.findById(task._id)
@@ -146,12 +160,12 @@ const updateTask = async (req, res) => {
     }
 
     // Validate status if provided
-    if (
-      req.body.status &&
-      !(await validateStatus(req.user._id, req.body.status))
-    ) {
-      return res.status(400).json({ message: "Invalid status" });
-    }
+    // if (
+    //   req.body.status &&
+    //   !(await validateStatus(req.user._id, req.body.status))
+    // ) {
+    //   return res.status(400).json({ message: "Invalid status" });
+    // }
 
     const updatedTask = await Task.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -256,15 +270,18 @@ const getTasksBoard = async (req, res) => {
 
     // Group tasks by status and format the response
     const boardData = sections.map((section) => {
-      const sectionTasks = tasks.filter((task) => task.status === section.name);
-
+      const sectionTasks = tasks.filter(
+        (task) => task.containerId === section.id
+      );
       return {
         id: section._id.toString(),
-        title: section.name,
+        title: section.title,
         color: section.color,
         tasks: sectionTasks.map((task) => ({
+          containerId: section.id,
           id: task._id.toString(),
           title: task.title,
+          status: section.title,
           description: task.description,
           dateRange: formatDateRange(task.dueDate),
           priority: task.priority,
@@ -274,6 +291,7 @@ const getTasksBoard = async (req, res) => {
             email: user.email,
             avatar: generateAvatarColor(user.name), // Helper function for avatar color
           })),
+          sortIndex: task.sortIndex,
           dueDate: task.dueDate,
           timeTracked: task.timeTracked,
           attachments: task.attachments.length,

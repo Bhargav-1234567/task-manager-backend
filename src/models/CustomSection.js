@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const customSectionSchema = new mongoose.Schema(
   {
-    name: {
+    title: {
       type: String,
       required: [true, "Please add a section name"],
       trim: true,
@@ -15,11 +15,15 @@ const customSectionSchema = new mongoose.Schema(
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
     },
     isDefault: {
       type: Boolean,
       default: false,
+    },
+    tasks: {
+      type: Array,
+      required: false,
     },
   },
   {
@@ -28,6 +32,6 @@ const customSectionSchema = new mongoose.Schema(
 );
 
 // Prevent duplicate section names for the same user
-customSectionSchema.index({ name: 1, createdBy: 1 }, { unique: true });
+// customSectionSchema.index({ name: 1, createdBy: 1 }, { unique: true });
 
 module.exports = mongoose.model("CustomSection", customSectionSchema);
