@@ -155,9 +155,9 @@ const updateTask = async (req, res) => {
     }
 
     // Check if user owns the task
-    if (task.createdBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
+    // if (task.createdBy.toString() !== req.user._id.toString()) {
+    //   return res.status(403).json({ message: "Not authorized" });
+    // }
 
     // Validate status if provided
     // if (
