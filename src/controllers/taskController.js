@@ -1,5 +1,6 @@
 const Task = require("../models/Task");
 const CustomSection = require("../models/CustomSection");
+const dayjs = require("dayjs");
 
 // Helper function to validate status
 const validateStatus = async (userId, statusId) => {
@@ -500,6 +501,241 @@ const generateAvatarColor = (name) => {
   return colors[index];
 };
 
+const startTimeTracking = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    // Check if user owns the task or is assigned to it
+    if (
+      task.createdBy.toString() !== req.user._id.toString() &&
+      !task.assignees.some(
+        (userId) => userId.toString() === req.user._id.toString()
+      )
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // Check if there's already an active time tracking session
+    const activeSession = task.timeTracking?.find(
+      (session) => session.isActive
+    );
+    if (activeSession) {
+      return res.status(400).json({
+        message: "Time tracking is already active for this task",
+        activeSession: {
+          startTime: activeSession.startTime,
+          duration: dayjs().diff(dayjs(activeSession.startTime), "second"),
+        },
+      });
+    }
+
+    // Create new time tracking session
+    const newSession = {
+      startTime: new Date(),
+      isActive: true,
+      duration: 0,
+    };
+
+    if (!task.timeTracking) {
+      task.timeTracking = [];
+    }
+
+    task.timeTracking.push(newSession);
+    await task.save();
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignees", "name email avatar")
+      .populate("createdBy", "name email");
+
+    res.json({
+      message: "Time tracking started",
+      task: populatedTask,
+      activeSession: newSession,
+    });
+  } catch (error) {
+    console.error("Start time tracking error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// @desc    Stop time tracking for a task
+// @route   POST /api/tasks/:id/time/stop
+// @access  Private
+const stopTimeTracking = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    // Check if user owns the task or is assigned to it
+    if (
+      task.createdBy.toString() !== req.user._id.toString() &&
+      !task.assignees.some(
+        (userId) => userId.toString() === req.user._id.toString()
+      )
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // Find active time tracking session
+    const activeSessionIndex = task.timeTracking?.findIndex(
+      (session) => session.isActive
+    );
+
+    if (activeSessionIndex === -1 || !task.timeTracking) {
+      return res
+        .status(400)
+        .json({ message: "No active time tracking session found" });
+    }
+
+    const activeSession = task.timeTracking[activeSessionIndex];
+    const endTime = new Date();
+    const sessionDuration = dayjs(endTime).diff(
+      dayjs(activeSession.startTime),
+      "second"
+    );
+
+    // Update the session
+    task.timeTracking[activeSessionIndex] = {
+      ...activeSession,
+      endTime,
+      duration: sessionDuration,
+      isActive: false,
+    };
+
+    // Update total time tracked
+    task.timeTracked = (task.timeTracked || 0) + sessionDuration;
+
+    await task.save();
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignees", "name email avatar")
+      .populate("createdBy", "name email");
+
+    res.json({
+      message: "Time tracking stopped",
+      task: populatedTask,
+      sessionDuration,
+      totalTimeTracked: task.timeTracked,
+    });
+  } catch (error) {
+    console.error("Stop time tracking error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// @desc    Get time tracking status for a task
+// @route   GET /api/tasks/:id/time/status
+// @access  Private
+const getTimeTrackingStatus = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    // Check if user owns the task or is assigned to it
+    if (
+      task.createdBy.toString() !== req.user._id.toString() &&
+      !task.assignees.some(
+        (userId) => userId.toString() === req.user._id.toString()
+      )
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const activeSession = task.timeTracking?.find(
+      (session) => session.isActive
+    );
+
+    let currentDuration = 0;
+    if (activeSession) {
+      currentDuration = dayjs().diff(dayjs(activeSession.startTime), "second");
+    }
+
+    res.json({
+      isActive: !!activeSession,
+      activeSession: activeSession
+        ? {
+            startTime: activeSession.startTime,
+            currentDuration,
+          }
+        : null,
+      totalTimeTracked: task.timeTracked || 0,
+      allSessions: task.timeTracking || [],
+    });
+  } catch (error) {
+    console.error("Get time tracking status error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// @desc    Get time tracking history for a task
+// @route   GET /api/tasks/:id/time/history
+// @access  Private
+const getTimeTrackingHistory = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    // Check if user owns the task or is assigned to it
+    if (
+      task.createdBy.toString() !== req.user._id.toString() &&
+      !task.assignees.some(
+        (userId) => userId.toString() === req.user._id.toString()
+      )
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const history = task.timeTracking || [];
+    const formattedHistory = history.map((session) => ({
+      ...session.toObject(),
+      formattedDuration: formatDuration(session.duration),
+      formattedStartTime: dayjs(session.startTime).format("MMM DD, YYYY HH:mm"),
+      formattedEndTime: session.endTime
+        ? dayjs(session.endTime).format("MMM DD, YYYY HH:mm")
+        : null,
+    }));
+
+    res.json({
+      history: formattedHistory,
+      totalTimeTracked: task.timeTracked || 0,
+      formattedTotalTime: formatDuration(task.timeTracked || 0),
+    });
+  } catch (error) {
+    console.error("Get time tracking history error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// Helper function to format duration
+const formatDuration = (seconds) => {
+  if (!seconds || seconds === 0) return "0s";
+
+  const duration = dayjs.duration(seconds, "seconds");
+  const hours = Math.floor(duration.asHours());
+  const minutes = duration.minutes();
+  const secs = duration.seconds();
+
+  let formatted = "";
+  if (hours > 0) formatted += `${hours}h `;
+  if (minutes > 0) formatted += `${minutes}m `;
+  if (secs > 0 || formatted === "") formatted += `${secs}s`;
+
+  return formatted.trim();
+};
+
 module.exports = {
   getTasks,
   getTask,
@@ -510,4 +746,8 @@ module.exports = {
   getTasksBoard,
   bulkUpdateSortIndex,
   reorderTasksInContainer,
+  startTimeTracking,
+  stopTimeTracking,
+  getTimeTrackingStatus,
+  getTimeTrackingHistory,
 };

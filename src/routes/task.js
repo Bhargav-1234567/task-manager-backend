@@ -9,6 +9,10 @@ const {
   getTasksBoard,
   bulkUpdateSortIndex,
   reorderTasksInContainer,
+  startTimeTracking,
+  stopTimeTracking,
+  getTimeTrackingStatus,
+  getTimeTrackingHistory,
 } = require("../controllers/taskController");
 const { protect } = require("../middleware/auth");
 
@@ -24,6 +28,13 @@ router.patch(
   protect,
   reorderTasksInContainer
 );
+
+// Time tracking routes
+router.post("/:id/time/start", protect, startTimeTracking);
+router.post("/:id/time/stop", protect, stopTimeTracking);
+router.get("/:id/time/status", protect, getTimeTrackingStatus);
+router.get("/:id/time/history", protect, getTimeTrackingHistory);
+
 router
   .route("/:id") // Make sure this colon is present
   .get(protect, getTask)

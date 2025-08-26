@@ -43,10 +43,23 @@ const taskSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    timeTracked: {
-      type: Number, // in seconds
-      default: 0,
-    },
+    timeTracking: [
+      {
+        startTime: {
+          type: Date,
+          required: true,
+        },
+        endTime: Date,
+        duration: {
+          type: Number, // duration in seconds
+          default: 0,
+        },
+        isActive: {
+          type: Boolean,
+          default: false,
+        },
+      },
+    ],
     attachments: [
       {
         name: String,
@@ -68,5 +81,19 @@ const taskSchema = new mongoose.Schema(
 // taskSchema.index({ createdBy: 1, status: 1 });
 taskSchema.index({ assignees: 1 });
 taskSchema.index({ dueDate: 1 });
-
+taskSchema.index({ "timeTracking.isActive": 1 });
+// Pre-save middleware to ensure only one active time tracking session per task
+taskSchema.pre("save", function (next) {
+  if (this.timeTracking && this.timeTracking.length > 0) {
+    const activeSessions = this.timeTracking.filter(
+      (session) => session.isActive
+    );
+    if (activeSessions.length > 1) {
+      return next(
+        new Error("Only one active time tracking session allowed per task")
+      );
+    }
+  }
+  next();
+});
 module.exports = mongoose.model("Task", taskSchema);
