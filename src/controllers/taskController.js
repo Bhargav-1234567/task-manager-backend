@@ -519,22 +519,41 @@ const startTimeTracking = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // Check if there's already an active time tracking session
-    const activeSession = task.timeTracking?.find(
-      (session) => session.isActive
-    );
-    if (activeSession) {
+    // NEW: Check if user already has an active time tracking session in any task
+    const userActiveSessions = await getUserActiveSessions(req.user._id);
+
+    // If user already has an active session, prevent starting a new one
+    if (userActiveSessions.length > 0) {
       return res.status(400).json({
-        message: "Time tracking is already active for this task",
+        message: "You already have an active time tracking session",
+        activeSessions: userActiveSessions,
+      });
+    }
+
+    // Check if there's already an active time tracking session for this user in this task
+    const userActiveSessionInTask = task.timeTracking?.find(
+      (session) =>
+        session.isActive &&
+        session.userId.toString() === req.user._id.toString()
+    );
+
+    if (userActiveSessionInTask) {
+      return res.status(400).json({
+        message:
+          "You already have an active time tracking session for this task",
         activeSession: {
-          startTime: activeSession.startTime,
-          duration: dayjs().diff(dayjs(activeSession.startTime), "second"),
+          startTime: userActiveSessionInTask.startTime,
+          duration: dayjs().diff(
+            dayjs(userActiveSessionInTask.startTime),
+            "second"
+          ),
         },
       });
     }
 
-    // Create new time tracking session
+    // Create new time tracking session with user information
     const newSession = {
+      userId: req.user._id,
       startTime: new Date(),
       isActive: true,
       duration: 0,
@@ -549,7 +568,8 @@ const startTimeTracking = async (req, res) => {
 
     const populatedTask = await Task.findById(task._id)
       .populate("assignees", "name email avatar")
-      .populate("createdBy", "name email");
+      .populate("createdBy", "name email")
+      .populate("timeTracking.userId", "name email");
 
     res.json({
       message: "Time tracking started",
@@ -583,15 +603,17 @@ const stopTimeTracking = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // Find active time tracking session
+    // Find active time tracking session for this user
     const activeSessionIndex = task.timeTracking?.findIndex(
-      (session) => session.isActive
+      (session) =>
+        session.isActive &&
+        session.userId.toString() === req.user._id.toString()
     );
 
     if (activeSessionIndex === -1 || !task.timeTracking) {
-      return res
-        .status(400)
-        .json({ message: "No active time tracking session found" });
+      return res.status(400).json({
+        message: "No active time tracking session found for this user",
+      });
     }
 
     const activeSession = task.timeTracking[activeSessionIndex];
@@ -603,20 +625,21 @@ const stopTimeTracking = async (req, res) => {
 
     // Update the session
     task.timeTracking[activeSessionIndex] = {
-      ...activeSession,
+      ...activeSession.toObject(),
       endTime,
       duration: sessionDuration,
       isActive: false,
     };
 
-    // Update total time tracked
+    // Update total time tracked for this task
     task.timeTracked = (task.timeTracked || 0) + sessionDuration;
 
     await task.save();
 
     const populatedTask = await Task.findById(task._id)
       .populate("assignees", "name email avatar")
-      .populate("createdBy", "name email");
+      .populate("createdBy", "name email")
+      .populate("timeTracking.userId", "name email");
 
     res.json({
       message: "Time tracking stopped",
@@ -629,7 +652,6 @@ const stopTimeTracking = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 // @desc    Get time tracking status for a task
 // @route   GET /api/tasks/:id/time/status
 // @access  Private
@@ -651,25 +673,43 @@ const getTimeTrackingStatus = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const activeSession = task.timeTracking?.find(
-      (session) => session.isActive
+    // Get active session for this user
+    const userActiveSession = task.timeTracking?.find(
+      (session) =>
+        session.isActive &&
+        session.userId.toString() === req.user._id.toString()
     );
 
     let currentDuration = 0;
-    if (activeSession) {
-      currentDuration = dayjs().diff(dayjs(activeSession.startTime), "second");
+    if (userActiveSession) {
+      currentDuration = dayjs().diff(
+        dayjs(userActiveSession.startTime),
+        "second"
+      );
     }
 
+    // Get all user sessions in this task
+    const userSessions =
+      task.timeTracking?.filter(
+        (session) => session.userId.toString() === req.user._id.toString()
+      ) || [];
+
+    // Calculate total time tracked by this user in this task
+    const userTotalTimeTracked = userSessions.reduce((total, session) => {
+      return total + (session.duration || 0);
+    }, 0);
+
     res.json({
-      isActive: !!activeSession,
-      activeSession: activeSession
+      isActive: !!userActiveSession,
+      activeSession: userActiveSession
         ? {
-            startTime: activeSession.startTime,
+            startTime: userActiveSession.startTime,
             currentDuration,
           }
         : null,
       totalTimeTracked: task.timeTracked || 0,
-      allSessions: task.timeTracking || [],
+      userTotalTimeTracked,
+      allSessions: userSessions,
     });
   } catch (error) {
     console.error("Get time tracking status error:", error);
@@ -698,8 +738,13 @@ const getTimeTrackingHistory = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const history = task.timeTracking || [];
-    const formattedHistory = history.map((session) => ({
+    // Get sessions for this user only
+    const userSessions =
+      task.timeTracking?.filter(
+        (session) => session.userId.toString() === req.user._id.toString()
+      ) || [];
+
+    const formattedHistory = userSessions.map((session) => ({
       ...session.toObject(),
       formattedDuration: formatDuration(session.duration),
       formattedStartTime: dayjs(session.startTime).format("MMM DD, YYYY HH:mm"),
@@ -708,10 +753,17 @@ const getTimeTrackingHistory = async (req, res) => {
         : null,
     }));
 
+    // Calculate total time tracked by this user in this task
+    const userTotalTimeTracked = userSessions.reduce((total, session) => {
+      return total + (session.duration || 0);
+    }, 0);
+
     res.json({
       history: formattedHistory,
       totalTimeTracked: task.timeTracked || 0,
+      userTotalTimeTracked,
       formattedTotalTime: formatDuration(task.timeTracked || 0),
+      formattedUserTotalTime: formatDuration(userTotalTimeTracked),
     });
   } catch (error) {
     console.error("Get time tracking history error:", error);
@@ -736,6 +788,92 @@ const formatDuration = (seconds) => {
   return formatted.trim();
 };
 
+const getActiveTimeSessions = async (req, res) => {
+  try {
+    // Find all tasks where the user is either the creator or an assignee
+    const tasks = await Task.find({
+      $or: [{ createdBy: req.user._id }, { assignees: req.user._id }],
+    }).select("title timeTracking");
+
+    // Extract active sessions with task information
+    const activeSessions = [];
+
+    tasks.forEach((task) => {
+      // Find active session for this user in this task
+      const activeSession = task.timeTracking?.find(
+        (session) =>
+          session.isActive &&
+          session.userId.toString() === req.user._id.toString()
+      );
+
+      // Calculate total time spent by this user on this task (all sessions)
+      const userSessions =
+        task.timeTracking?.filter(
+          (session) => session.userId.toString() === req.user._id.toString()
+        ) || [];
+
+      const totalTimeOnTask = userSessions.reduce((total, session) => {
+        // For active sessions, calculate current duration
+        if (session.isActive) {
+          return total + dayjs().diff(dayjs(session.startTime), "second");
+        }
+        // For completed sessions, use stored duration
+        return total + (session.duration || 0);
+      }, 0);
+
+      if (activeSession) {
+        activeSessions.push({
+          taskId: task._id,
+          taskTitle: task.title,
+          startTime: activeSession.startTime,
+          duration: totalTimeOnTask, // Total time user spent on this task
+          sessionId: activeSession._id,
+        });
+      }
+    });
+
+    res.json({
+      activeSessions,
+      count: activeSessions.length,
+    });
+  } catch (error) {
+    console.error("Get active time sessions error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+// Utility function to get all active sessions for a user
+const getUserActiveSessions = async (userId) => {
+  const tasks = await Task.find({
+    $or: [{ createdBy: userId }, { assignees: userId }],
+    "timeTracking.isActive": true,
+    "timeTracking.userId": userId,
+  })
+    .populate("timeTracking.userId", "name email")
+    .select("title timeTracking");
+
+  const activeSessions = [];
+
+  tasks.forEach((task) => {
+    const activeSession = task.timeTracking.find(
+      (session) =>
+        session.isActive && session.userId._id.toString() === userId.toString()
+    );
+
+    if (activeSession) {
+      activeSessions.push({
+        taskId: task._id,
+        taskTitle: task.title,
+        userId: activeSession.userId,
+        startTime: activeSession.startTime,
+        duration: dayjs().diff(dayjs(activeSession.startTime), "second"),
+        sessionId: activeSession._id,
+      });
+    }
+  });
+
+  return activeSessions;
+};
+
 module.exports = {
   getTasks,
   getTask,
@@ -750,4 +888,82 @@ module.exports = {
   stopTimeTracking,
   getTimeTrackingStatus,
   getTimeTrackingHistory,
+  getActiveTimeSessions,
 };
+
+//IMP BKP
+// const getActiveTimeSessions = async (req, res) => {
+//   try {
+//     const activeSessions = await getUserActiveSessions(req.user._id);
+
+//     res.json({
+//       activeSessions,
+//       count: activeSessions.length,
+//     });
+//   } catch (error) {
+//     console.error("Get active time sessions error:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
+// // Utility function to get all active sessions for a user with total task time
+// const getUserActiveSessions = async (userId) => {
+//   // Find all tasks where the user is either the creator or an assignee
+//   const tasks = await Task.find({
+//     $or: [{ createdBy: userId }, { assignees: userId }],
+//   })
+//     .populate("timeTracking.userId", "name email")
+//     .select("title timeTracking");
+
+//   const activeSessions = [];
+
+//   tasks.forEach((task) => {
+//     // Find active session for this user in this task
+//     const activeSession = task.timeTracking.find(
+//       (session) =>
+//         session.isActive && session.userId._id.toString() === userId.toString()
+//     );
+
+//     // Calculate total time spent by this user on this task (all sessions)
+//     const userSessions = task.timeTracking.filter(
+//       (session) => session.userId._id.toString() === userId.toString()
+//     );
+
+//     const totalTimeOnTask = userSessions.reduce((total, session) => {
+//       // For active sessions, calculate current duration
+//       if (session.isActive) {
+//         return total + dayjs().diff(dayjs(session.startTime), "second");
+//       }
+//       // For completed sessions, use stored duration
+//       return total + (session.duration || 0);
+//     }, 0);
+
+//     if (activeSession) {
+//       activeSessions.push({
+//         taskId: task._id,
+//         taskTitle: task.title,
+//         userId: activeSession.userId,
+//         startTime: activeSession.startTime,
+//         currentDuration: dayjs().diff(dayjs(activeSession.startTime), "second"),
+//         sessionId: activeSession._id,
+//         totalTimeOnTask: totalTimeOnTask, // Total time user spent on this task
+//         formattedTotalTimeOnTask: formatDuration(totalTimeOnTask), // Formatted version
+//       });
+//     } else if (totalTimeOnTask > 0) {
+//       // Include tasks with no active session but with historical time
+//       activeSessions.push({
+//         taskId: task._id,
+//         taskTitle: task.title,
+//         userId: userId,
+//         startTime: null,
+//         currentDuration: 0,
+//         sessionId: null,
+//         totalTimeOnTask: totalTimeOnTask, // Total time user spent on this task
+//         formattedTotalTimeOnTask: formatDuration(totalTimeOnTask), // Formatted version
+//         hasHistory: true, // Flag to indicate this is historical data only
+//       });
+//     }
+//   });
+
+//   return activeSessions;
+// };

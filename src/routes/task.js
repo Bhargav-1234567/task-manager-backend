@@ -13,6 +13,7 @@ const {
   stopTimeTracking,
   getTimeTrackingStatus,
   getTimeTrackingHistory,
+  getActiveTimeSessions,
 } = require("../controllers/taskController");
 const { protect } = require("../middleware/auth");
 
@@ -42,5 +43,6 @@ router
   .delete(protect, deleteTask);
 
 router.patch("/:id/status", protect, updateTaskStatus); // And here
+router.get("/time-tracking/active-sessions", protect, getActiveTimeSessions);
 
 module.exports = router;

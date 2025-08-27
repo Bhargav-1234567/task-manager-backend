@@ -45,6 +45,11 @@ const taskSchema = new mongoose.Schema(
     },
     timeTracking: [
       {
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
         startTime: {
           type: Date,
           required: true,
@@ -85,15 +90,31 @@ taskSchema.index({ "timeTracking.isActive": 1 });
 // Pre-save middleware to ensure only one active time tracking session per task
 taskSchema.pre("save", function (next) {
   if (this.timeTracking && this.timeTracking.length > 0) {
-    const activeSessions = this.timeTracking.filter(
-      (session) => session.isActive
-    );
-    if (activeSessions.length > 1) {
-      return next(
-        new Error("Only one active time tracking session allowed per task")
-      );
+    // Group active sessions by userId
+    const userActiveSessions = {};
+
+    this.timeTracking.forEach((session) => {
+      if (session.isActive) {
+        if (userActiveSessions[session.userId]) {
+          userActiveSessions[session.userId].push(session);
+        } else {
+          userActiveSessions[session.userId] = [session];
+        }
+      }
+    });
+
+    // Check if any user has more than one active session
+    for (const userId in userActiveSessions) {
+      if (userActiveSessions[userId].length > 1) {
+        return next(
+          new Error(
+            "Only one active time tracking session allowed per user per task"
+          )
+        );
+      }
     }
   }
   next();
 });
+
 module.exports = mongoose.model("Task", taskSchema);
