@@ -741,20 +741,42 @@ const getTimeTrackingHistory = async (req, res) => {
     // Get sessions for this user only
     const userSessions =
       task.timeTracking?.filter(
-        (session) => session.userId.toString() === req.user._id.toString()
+        (session) =>
+          session.userId &&
+          session.userId.toString() === req.user._id.toString()
       ) || [];
 
-    const formattedHistory = userSessions.map((session) => ({
-      ...session.toObject(),
-      formattedDuration: formatDuration(session.duration),
-      formattedStartTime: dayjs(session.startTime).format("MMM DD, YYYY HH:mm"),
-      formattedEndTime: session.endTime
-        ? dayjs(session.endTime).format("MMM DD, YYYY HH:mm")
-        : null,
-    }));
+    const formattedHistory = userSessions.map((session) => {
+      // Calculate duration for active sessions
+      let duration = session.duration || 0;
+      if (session.isActive) {
+        duration = Math.floor((new Date() - session.startTime) / 1000);
+      }
+
+      return {
+        _id: session._id,
+        userId: session.userId,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        duration: duration,
+        isActive: session.isActive,
+        formattedDuration: formatDuration(duration),
+        formattedStartTime: dayjs(session.startTime).format(
+          "MMM DD, YYYY HH:mm"
+        ),
+        formattedEndTime: session.endTime
+          ? dayjs(session.endTime).format("MMM DD, YYYY HH:mm")
+          : null,
+      };
+    });
 
     // Calculate total time tracked by this user in this task
     const userTotalTimeTracked = userSessions.reduce((total, session) => {
+      // For active sessions, calculate current duration
+      if (session.isActive) {
+        return total + Math.floor((new Date() - session.startTime) / 1000);
+      }
+      // For completed sessions, use stored duration
       return total + (session.duration || 0);
     }, 0);
 
@@ -770,24 +792,21 @@ const getTimeTrackingHistory = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 // Helper function to format duration
+// Utility function to format duration in seconds to HH:MM:SS format
 const formatDuration = (seconds) => {
-  if (!seconds || seconds === 0) return "0s";
+  if (!seconds || seconds < 0) return "00:00:00";
 
-  const duration = dayjs.duration(seconds, "seconds");
-  const hours = Math.floor(duration.asHours());
-  const minutes = duration.minutes();
-  const secs = duration.seconds();
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
 
-  let formatted = "";
-  if (hours > 0) formatted += `${hours}h `;
-  if (minutes > 0) formatted += `${minutes}m `;
-  if (secs > 0 || formatted === "") formatted += `${secs}s`;
-
-  return formatted.trim();
+  return [
+    hours.toString().padStart(2, "0"),
+    minutes.toString().padStart(2, "0"),
+    secs.toString().padStart(2, "0"),
+  ].join(":");
 };
-
 const getActiveTimeSessions = async (req, res) => {
   try {
     // Find all tasks where the user is either the creator or an assignee
@@ -874,6 +893,114 @@ const getUserActiveSessions = async (userId) => {
   return activeSessions;
 };
 
+// @desc    Get user dashboard with tasks summary, time tracking, and all tasks
+// @route   GET /api/dashboard/user-stats
+// @access  Private
+const getUserDashboard = async (req, res) => {
+  try {
+    // Find all tasks where the user is either the creator or an assignee
+    const tasks = await Task.find({
+      $or: [
+        { createdBy: req.user._id },
+        { assignees: req.user._id }
+      ]
+    })
+    .populate("assignees", "name email avatar")
+    .populate("createdBy", "name email")
+    .populate("timeTracking.userId", "name email")
+    .sort({ createdAt: -1 });
+
+    // 1. Total number of tasks per status
+    const tasksPerStatus = {};
+    tasks.forEach(task => {
+      if (!tasksPerStatus[task.status]) {
+        tasksPerStatus[task.status] = 0;
+      }
+      tasksPerStatus[task.status]++;
+    });
+
+    // 2. All tasks time duration with task details for current user
+    const tasksWithTime = tasks.map(task => {
+      // Get sessions for current user only
+      const userSessions = task.timeTracking?.filter(
+        session => session.userId && session.userId._id.toString() === req.user._id.toString()
+      ) || [];
+
+      // Calculate total time spent by user on this task
+      const totalTimeOnTask = userSessions.reduce((total, session) => {
+        if (session.isActive) {
+          return total + dayjs().diff(dayjs(session.startTime), 'second');
+        }
+        return total + (session.duration || 0);
+      }, 0);
+
+      // Get active session for current user
+      const activeSession = userSessions.find(session => session.isActive);
+
+      return {
+        _id: task._id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        labels: task.labels,
+        assignees: task.assignees,
+        createdBy: task.createdBy,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        totalTimeOnTask: totalTimeOnTask,
+        formattedTotalTime: formatDuration(totalTimeOnTask),
+        hasActiveSession: !!activeSession,
+        activeSession: activeSession ? {
+          startTime: activeSession.startTime,
+          currentDuration: dayjs().diff(dayjs(activeSession.startTime), 'second'),
+          formattedCurrentDuration: formatDuration(dayjs().diff(dayjs(activeSession.startTime), 'second'))
+        } : null,
+        sessions: userSessions.map(session => ({
+          _id: session._id,
+          startTime: session.startTime,
+          endTime: session.endTime,
+          duration: session.isActive ? 
+            dayjs().diff(dayjs(session.startTime), 'second') : 
+            session.duration,
+          isActive: session.isActive,
+          formattedDuration: formatDuration(session.isActive ? 
+            dayjs().diff(dayjs(session.startTime), 'second') : 
+            session.duration),
+          formattedStartTime: dayjs(session.startTime).format("MMM DD, YYYY HH:mm"),
+          formattedEndTime: session.endTime ? 
+            dayjs(session.endTime).format("MMM DD, YYYY HH:mm") : null
+        }))
+      };
+    });
+
+    // Calculate overall statistics
+    const totalTasks = tasks.length;
+    const totalTimeTracked = tasksWithTime.reduce((total, task) => total + task.totalTimeOnTask, 0);
+    const activeSessionsCount = tasksWithTime.filter(task => task.hasActiveSession).length;
+
+    res.json({
+      user: {
+        _id: req.user._id,
+        name: req.user.name,
+        email: req.user.email
+      },
+      summary: {
+        totalTasks,
+        tasksPerStatus,
+        totalTimeTracked,
+        formattedTotalTimeTracked: formatDuration(totalTimeTracked),
+        activeSessionsCount
+      },
+      tasks: tasksWithTime
+    });
+  } catch (error) {
+    console.error("Get user dashboard error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   getTasks,
   getTask,
@@ -889,6 +1016,7 @@ module.exports = {
   getTimeTrackingStatus,
   getTimeTrackingHistory,
   getActiveTimeSessions,
+  getUserDashboard
 };
 
 //IMP BKP

@@ -14,6 +14,7 @@ const {
   getTimeTrackingStatus,
   getTimeTrackingHistory,
   getActiveTimeSessions,
+  getUserDashboard,
 } = require("../controllers/taskController");
 const { protect } = require("../middleware/auth");
 
@@ -44,5 +45,6 @@ router
 
 router.patch("/:id/status", protect, updateTaskStatus); // And here
 router.get("/time-tracking/active-sessions", protect, getActiveTimeSessions);
+router.get("/dashboard/user-stats", protect, getUserDashboard);
 
 module.exports = router;
